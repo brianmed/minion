@@ -15,23 +15,29 @@ sub elect {
 
   my $db = $self->pg->db;
 
-  my $who_is_selected = "select elected from minion_just_one";
-  my $elected = ($db->query($who_is_selected)->hash // {elected => 0})->{elected};
+  my $who_is_selected = "select elected, extract(epoch from heartbeat) as heartbeat, extract(epoch from now()) as now from minion_just_one";
+  my $meta = $db->query($who_is_selected)->hash;
 
-  if ($elected) {
-    my $info = $self->worker_info($elected);
-    return $elected if $info && kill 0, $info->{pid};
+  # Election results
+  if ($meta->{elected}) {
 
-    $db->query("delete from minion_just_one where elected = ?", $elected);
+    # Had a heartbeat at least 30 seconds ago
+    if (30 > abs(int($meta->{heartbeat} - $meta->{now}))) {
+      return $self;
+    }
+
+    # No heartbeat, so removing the govenor
+    $db->query("delete from minion_just_one where elected = ?", $meta->{elected});
   }
 
+  # Do the election
   $db->query(
-    "insert into minion_just_one (just_one, elected) values (true, ?)
+    "insert into minion_just_one (just_one, elected, heartbeat) values (true, ?, now())
      on conflict (just_one) do nothing",
      $id
   );
 
-  return $db->query($who_is_selected)->hash->{elected};
+  return $self;
 }
 
 sub elected {
@@ -42,7 +48,13 @@ sub elected {
   my $who_is_selected = "select elected from minion_just_one";
   my $elected = ($db->query($who_is_selected)->hash // {elected => 0})->{elected};
 
-  return $id == $elected;
+  # We are not elected
+  return 0 if $id != $elected;
+
+  # Do the heartbeat
+  $self->pg->db->query("update minion_just_one set heartbeat = now()");
+
+  return 1;
 }
 
 sub recur {
@@ -50,6 +62,7 @@ sub recur {
 
   return unless $self->elected($id);
 
+  # Only the elected processes recurring job rescheduling
   my $sql = 
     "select * from minion_jobs 
      where recurred = false
@@ -875,6 +888,7 @@ alter table minion_jobs add column parents bigint[] default '{}'::bigint[];
 -- 11 up
 create table if not exists minion_just_one (
     just_one bool not null unique,
+    heartbeat timestamp with time zone not null,
     elected bigserial not null
 );
 alter table minion_jobs add column recurring text;

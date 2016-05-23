@@ -52,7 +52,7 @@ sub _work {
   }
 
   # Politics
-  my $elected = $self->{worker}->elect;
+  $self->{worker}->elect;
   $self->{worker}->recur;
 
   # Check if jobs are finished
