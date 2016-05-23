@@ -29,6 +29,8 @@ sub unregister_worker {
 
 sub worker_info { croak 'Method "worker_info" not implemented by subclass' }
 
+sub elect     { croak 'Method "elect" not implemented by subclass' }
+
 1;
 
 =encoding utf8

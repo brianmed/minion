@@ -32,6 +32,10 @@ sub unregister {
   return $self;
 }
 
+sub elect { $_[0]->minion->backend->elect($_[0]->id) }
+
+sub recur { $_[0]->minion->backend->recur($_[0]->id) }
+
 1;
 
 =encoding utf8

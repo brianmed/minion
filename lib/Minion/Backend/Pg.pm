@@ -5,8 +5,66 @@ use Carp 'croak';
 use Mojo::IOLoop;
 use Mojo::Pg 2.18;
 use Sys::Hostname 'hostname';
+use Schedule::Cron::Events;
+use Time::Local;
 
 has 'pg';
+
+sub elect {
+  my ($self, $id) = @_;
+
+  my $db = $self->pg->db;
+
+  my $who_is_selected = "select elected from minion_just_one";
+  my $elected = ($db->query($who_is_selected)->hash // {elected => 0})->{elected};
+
+  if ($elected) {
+    my $info = $self->worker_info($elected);
+    return $elected if $info && kill 0, $info->{pid};
+
+    $db->query("delete from minion_just_one where elected = ?", $elected);
+  }
+
+  $db->query(
+    "insert into minion_just_one (just_one, elected) values (true, ?)
+     on conflict (just_one) do nothing",
+     $id
+  );
+
+  return $db->query($who_is_selected)->hash->{elected};
+}
+
+sub elected {
+  my ($self, $id) = @_;
+
+  my $db = $self->pg->db;
+
+  my $who_is_selected = "select elected from minion_just_one";
+  my $elected = ($db->query($who_is_selected)->hash // {elected => 0})->{elected};
+
+  return $id == $elected;
+}
+
+sub recur {
+  my ($self, $id) = @_;
+
+  return unless $self->elected($id);
+
+  my $sql = 
+    "select * from minion_jobs 
+     where recurred = false
+         and recurring is not null
+         and state = 'finished'
+    ";
+
+  my $recur = $self->pg->db->query($sql)->expand->hashes->to_array // [];
+
+  foreach my $r (@{ $recur }) {
+    # Should this be in a transaction?
+    $self->enqueue($r->{task}, $r->{args}, { recurring => $r->{recurring} });
+    $self->pg->db->query("update minion_jobs set recurred = true where id = ?", $r->{id});
+  }
+}
 
 sub dequeue {
   my ($self, $id, $wait, $options) = @_;
@@ -27,14 +85,28 @@ sub dequeue {
 sub enqueue {
   my ($self, $task, $args, $options) = (shift, shift, shift || [], shift || {});
 
+  if ($options->{recurring}) {
+    my $time = $self->pg->db->query("select extract(epoch from now())")->array->[0];
+
+    my $cron = Schedule::Cron::Events->new(
+      sprintf("%s /bin/foo", $options->{recurring}),
+      Date => [ (localtime($time))[0..5] ]
+    );
+
+    my $epochSecs = timelocal($cron->nextEvent);
+
+    $options->{delay} = $epochSecs - $time;
+  }
+
   my $db = $self->pg->db;
   return $db->query(
     "insert into minion_jobs
-       (args, attempts, delayed, parents, priority, queue, task)
-     values (?, ?, (now() + (interval '1 second' * ?)), ?, ?, ?, ?)
+       (args, attempts, delayed, parents, priority, queue, task, recurring, recurred)
+     values (?, ?, (now() + (interval '1 second' * ?)), ?, ?, ?, ?, ?, false)
      returning id", {json => $args}, $options->{attempts} // 1,
     $options->{delay} // 0, $options->{parents} || [],
-    $options->{priority} // 0, $options->{queue} // 'default', $task
+    $options->{priority} // 0, $options->{queue} // 'default', $task,
+    $options->{recurring} 
   )->hash->{id};
 }
 
@@ -79,6 +151,7 @@ sub new {
 
   croak 'PostgreSQL 9.5 or later is required'
     if Mojo::Pg->new(@_)->db->dbh->{pg_server_version} < 90500;
+
   my $pg = $self->pg->auto_migrate(1)->max_connections(1);
   $pg->migrations->name('minion')->from_data;
 
@@ -798,3 +871,11 @@ drop function if exists minion_jobs_notify_workers();
 
 -- 10 up
 alter table minion_jobs add column parents bigint[] default '{}'::bigint[];
+
+-- 11 up
+create table if not exists minion_just_one (
+    just_one bool not null unique,
+    elected bigserial not null
+);
+alter table minion_jobs add column recurring text;
+alter table minion_jobs add column recurred bool;

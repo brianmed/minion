@@ -51,6 +51,10 @@ sub _work {
       = steady_time + ($self->{repair} - int rand $self->{repair} / 2);
   }
 
+  # Politics
+  my $elected = $self->{worker}->elect;
+  $self->{worker}->recur;
+
   # Check if jobs are finished
   my $jobs = $self->{jobs} ||= {};
   $jobs->{$_}->is_finished($_) and delete $jobs->{$_} for keys %$jobs;
