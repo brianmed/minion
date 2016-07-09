@@ -84,7 +84,7 @@ sub _work {
     if ($cmd eq "queue") {
         $self->app->log->debug("Adhoc queue adjustment: " . join(",", @{ $args }));
 
-        $self->{queue} = $args;
+        $self->{queues} = $args;
     }
   }
 
