@@ -27,14 +27,20 @@ sub dequeue {
 sub enqueue {
   my ($self, $task, $args, $options) = (shift, shift, shift || [], shift || {});
 
+  # Requested worker must be alive
+  if ($options->{requested_worker}) {
+      die("Requested worker is not alive") unless $self->worker_info($options->{requested_worker});
+  }
+
   my $db = $self->pg->db;
   return $db->query(
     "insert into minion_jobs
-       (args, attempts, delayed, parents, priority, queue, task)
-     values (?, ?, (now() + (interval '1 second' * ?)), ?, ?, ?, ?)
+       (args, attempts, delayed, parents, priority, queue, requested_worker, task)
+     values (?, ?, (now() + (interval '1 second' * ?)), ?, ?, ?, ?, ?)
      returning id", {json => $args}, $options->{attempts} // 1,
     $options->{delay} // 0, $options->{parents} || [],
-    $options->{priority} // 0, $options->{queue} // 'default', $task
+    $options->{priority} // 0, $options->{queue} // 'default',
+    $options->{requested_worker} // 0, $task
   )->hash->{id};
 }
 
@@ -206,13 +212,17 @@ sub _try {
        where delayed <= now() and (parents = '{}' or cardinality(parents) = (
          select count(*) from minion_jobs
          where id = any(j.parents) and state = 'finished'
-       )) and queue = any (?) and state = 'inactive' and task = any (?)
+       ))
+       and queue = any (?) and state = 'inactive'
+       and task = any (?) and requested_worker = any (?)
+         
        order by priority desc, created
        limit 1
        for update skip locked
      )
      returning id, args, retries, task", $id,
-    $options->{queues} || ['default'], [keys %{$self->minion->tasks}]
+    $options->{queues} || ['default'], [keys %{$self->minion->tasks}],
+    [0, $id]
   )->expand->hash;
 }
 
@@ -364,6 +374,12 @@ Job priority, defaults to C<0>.
   queue => 'important'
 
 Queue to put job in, defaults to C<default>.
+
+=item requested_worker
+
+  requested_worker => 3
+
+Currently active worker job should run on.
 
 =back
 
@@ -798,3 +814,6 @@ drop function if exists minion_jobs_notify_workers();
 
 -- 10 up
 alter table minion_jobs add column parents bigint[] default '{}'::bigint[];
+
+-- 11 up
+alter table minion_jobs add column requested_worker bigint not null default '0';
