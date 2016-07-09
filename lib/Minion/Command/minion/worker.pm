@@ -14,8 +14,24 @@ sub run {
     'I|heartbeat-interval=i' => \($self->{hearthbeat} = 60),
     'j|jobs=i'               => \($self->{max}        = 4),
     'q|queue=s'              => \my @queues,
-    'R|repair-interval=i'    => \($self->{repair}     = 21600);
+    'R|repair-interval=i'    => \($self->{repair}     = 21600),
+    'adhoc=i'                => \my $adhoc_worker,
+    'adhoc-max=i'            => \my $adhoc_max,
+    'adhoc-queue=s'          => \my @adhoc_queue;
   $self->{queues} = @queues ? \@queues : ['default'];
+
+  if ($adhoc_max || @adhoc_queue) {
+    die("No worker requested, please pass in -adhoc") unless $adhoc_worker;
+    die("Requested worker is not alive") unless $self->app->minion->backend->worker_info($adhoc_worker);
+
+    my $adhoc = {};
+    $adhoc->{max} = $adhoc_max if $adhoc_max;
+    $adhoc->{queues} = \@adhoc_queue if @adhoc_queue;
+
+    $self->app->minion->backend->worker_adhoc($adhoc_worker, $adhoc);
+
+    exit;
+  }
 
   local $SIG{CHLD} = 'DEFAULT';
   local $SIG{INT} = local $SIG{TERM} = sub { $self->{finished}++ };
@@ -49,6 +65,24 @@ sub _work {
     $app->minion->repair;
     $self->{check}
       = steady_time + ($self->{repair} - int rand $self->{repair} / 2);
+  }
+
+  # Adhoc adjustments 
+  if (my $adhoc = $worker->info->{adhoc}) {
+    if ($adhoc->{max}) {
+        $self->{max} += $adhoc->{max};
+
+        $self->app->log->debug("Adhoc worker adjustment: $$adhoc{max}: $$self{max}");
+    }
+
+    if ($adhoc->{queues}) {
+        $self->app->log->debug("Adhoc queue adjustment: " . join(",", @{ $adhoc->{queues} }));
+
+        $self->{queues} = $adhoc->{queues};
+    }
+
+    # Clear already processed adjustments
+    $worker->adhoc(undef);
   }
 
   # Check if jobs are finished
@@ -98,6 +132,9 @@ Minion::Command::minion::worker - Minion worker command
                                          defaults to "default"
     -R, --repair-interval <seconds>      Repair interval, defaults to 21600
                                          (6 hours)
+    --adhoc                              Adhoc worker id target
+    --adhoc-max                          Adhoc max job adjustment
+    --adhoc-queue                        Adhoc queue job adjustment
 
 =head1 DESCRIPTION
 

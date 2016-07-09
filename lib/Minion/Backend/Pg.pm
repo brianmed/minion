@@ -189,10 +189,23 @@ sub worker_info {
     "select id, extract(epoch from notified) as notified, array(
        select id from minion_jobs
        where state = 'active' and worker = minion_workers.id
-     ) as jobs, host, pid, extract(epoch from started) as started
+     ) as jobs, host, pid, extract(epoch from started) as started, adhoc
      from minion_workers
      where id = ?", shift
-  )->hash;
+  )->expand->hash;
+}
+
+sub worker_adhoc {
+  my ($self, $worker_id, $options) = (shift, shift, shift || {});
+
+  my $adhoc = {};
+  $adhoc->{max} = $options->{max} if $options->{max};
+  $adhoc->{queues} = $options->{queues} if $options->{queues};
+
+  return $self->pg->db->query(
+    "update minion_workers set adhoc = ? where id = ?",
+    { json => $adhoc }, $worker_id
+  );
 }
 
 sub _try {
@@ -798,3 +811,6 @@ drop function if exists minion_jobs_notify_workers();
 
 -- 10 up
 alter table minion_jobs add column parents bigint[] default '{}'::bigint[];
+
+-- 11 up
+alter table minion_workers add column adhoc jsonb;
