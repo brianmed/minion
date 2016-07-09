@@ -143,7 +143,7 @@ sub repair {
   );
 }
 
-sub reset { shift->pg->db->query('truncate minion_jobs, minion_workers') }
+sub reset { shift->pg->db->query('truncate minion_jobs, minion_workers, minion_msg') }
 
 sub retry_job {
   my ($self, $id, $retries, $options) = (shift, shift, shift, shift || {});
@@ -189,23 +189,32 @@ sub worker_info {
     "select id, extract(epoch from notified) as notified, array(
        select id from minion_jobs
        where state = 'active' and worker = minion_workers.id
-     ) as jobs, host, pid, extract(epoch from started) as started, adhoc
+     ) as jobs, host, pid, extract(epoch from started) as started
      from minion_workers
      where id = ?", shift
   )->expand->hash;
 }
 
-sub worker_adhoc {
-  my ($self, $worker_id, $options) = (shift, shift, shift || {});
+sub worker_msg_snd {
+  return shift->pg->db->query(
+    "insert into minion_msg (worker_id, topic, cmd, args)
+     values (?, ?, ?, ?) returning id", @_
+  )->hash->{id};
+}
 
-  my $adhoc = {};
-  $adhoc->{max} = $options->{max} if $options->{max};
-  $adhoc->{queues} = $options->{queues} if $options->{queues};
+sub worker_msg_rcv {
+  return shift->pg->db->query(
+    "select * from minion_msg where worker_id = ? order by id limit 1",
+     shift
+  )->expand->hash;
+}
 
-  return $self->pg->db->query(
-    "update minion_workers set adhoc = ? where id = ?",
-    { json => $adhoc }, $worker_id
-  );
+sub worker_msg_del {
+  !!shift->pg->db->query(
+    "delete from minion_msg
+     where id = ?
+     returning 1", shift
+  )->rows;
 }
 
 sub _try {
@@ -813,4 +822,14 @@ drop function if exists minion_jobs_notify_workers();
 alter table minion_jobs add column parents bigint[] default '{}'::bigint[];
 
 -- 11 up
-alter table minion_workers add column adhoc jsonb;
+create table if not exists minion_msg (
+  id         bigserial not null primary key,
+  worker_id  bigint not null,
+  topic      text not null,
+  cmd        text not null,
+  args       jsonb not null,
+  foreign key (worker_id) references minion_workers (id) on delete cascade
+);
+
+-- 11 down
+drop table if exists minion_msg;

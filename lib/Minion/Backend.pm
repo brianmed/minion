@@ -28,7 +28,10 @@ sub unregister_worker {
 }
 
 sub worker_info { croak 'Method "worker_info" not implemented by subclass' }
-sub worker_adhoc { croak 'Method "worker_adhoc" not implemented by subclass' }
+
+sub worker_msg_snd { croak 'Method "worker_msg_snd" not implemented by subclass' }
+sub worker_msg_rcv { croak 'Method "worker_msg_rcv" not implemented by subclass' }
+sub worker_msg_del { croak 'Method "worker_msg_del" not implemented by subclass' }
 
 1;
 

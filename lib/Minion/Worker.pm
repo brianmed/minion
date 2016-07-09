@@ -24,7 +24,21 @@ sub dequeue {
 
 sub info { $_[0]->minion->backend->worker_info($_[0]->id) }
 
-sub adhoc { $_[0]->minion->backend->worker_adhoc($_[0]->id, $_[1]) }
+sub msg {
+  my $self = shift;
+
+  if (@_) {
+    # Send
+    return $self->minion->backend->worker_msg_snd(@_);
+
+  } else {
+    # Recv
+    my $msg = $self->minion->backend->worker_msg_rcv($self->id);
+    $self->minion->backend->worker_msg_del($msg->{id}) if $msg;
+
+    return $msg;
+  }
+}
 
 sub register { $_[0]->id($_[0]->minion->backend->register_worker($_[0]->id)) }
 
