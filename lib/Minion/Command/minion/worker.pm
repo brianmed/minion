@@ -17,17 +17,15 @@ sub run {
     'q|queue=s'              => \my @queues,
     'R|repair-interval=i'    => \($self->{repair}     = 21600),
     'm|msg=s'                => \my $msg,
-    'a|arg=i'                => \my $arg;
+    'a|arg=s'                => \my $arg;
   $self->{queues} = @queues ? \@queues : ['default'];
-
-  $DB::single = 1;
 
   # Publish a worker message
   if ($msg) {
     my ($worker_id, $topic, $cmd, $_arg) = split(/:/, $msg);
 
     # Either use a 'simple' arg, or a json encoded arg from the command-line
-    $_arg = $arg ? decode_json($arg) : encode_json([$_arg]);
+    $_arg = $arg ? $arg : encode_json([$_arg]);
 
     $self->app->minion->backend->worker_msg_snd($worker_id, $topic, $cmd, $_arg);
 
